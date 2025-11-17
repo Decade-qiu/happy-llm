@@ -1,7 +1,7 @@
 import random
 import json
 import os
-from transformers import AutoTokenizer, PreTrainedTokenizerFast
+from transformers import AutoTokenizer 
 from tokenizers import (
     decoders,
     models,
@@ -187,4 +187,4 @@ def main():
     eval_tokenizer(save_dir)
 
 if __name__ == '__main__':
-    main()
+    eval_tokenizer("/Users/qzj/Desktop/Development/happy-llm/docs/chapter5/code/tokenizer_k")
