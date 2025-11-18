@@ -16,8 +16,8 @@ class ModelConfig(PretrainedConfig):
     model_type = "NanoLlama"
     def __init__(
         self,
-        dim: int = 768,
-        num_layer: int = 12,
+        dim: int = 1024,
+        num_layer: int = 18,
         num_head: int = 16,
         num_kv_head: int = 4,
         vocab_size: int = 6144,
@@ -379,7 +379,7 @@ class NanoLlama(PreTrainedModel):
                 input_ids = input_ids[:, -self.config.max_seq_len:]
 
             # Forward pass to get logits
-            logits = self(input_ids).logits
+            logits = self(input_ids)
             # Get logits for the last token
             next_token_logits = logits[:, -1, :]
             
@@ -584,7 +584,7 @@ class NanoLlama(PreTrainedModel):
         return best_beams
 
 if __name__ == '__main__':
-    tokenizer = AutoTokenizer.from_pretrained("/Users/qzj/Desktop/Development/happy-llm/docs/chapter5/code/tokenizer_k")
+    tokenizer = AutoTokenizer.from_pretrained("./tokenizer")
     print(len(tokenizer))
     args = ModelConfig(
         dim=1024,

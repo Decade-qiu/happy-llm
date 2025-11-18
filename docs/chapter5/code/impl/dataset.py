@@ -53,7 +53,7 @@ class PretrainDataset(Dataset):
         Optimized method to prepare samples by processing documents in a stream.
         This avoids loading the entire dataset into memory.
         """
-        num_documents = sum(1 for line in open(self.data_path, 'r'))
+        num_documents = sum(1 for _ in open(self.data_path, 'r'))
 
         buffer_tokens = []
         buffer_boundaries = []
