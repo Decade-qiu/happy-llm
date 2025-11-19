@@ -47,7 +47,7 @@ def save_checkpoint(model, optimizer, scheduler, scaler, step, loss, path):
 
 def init_model(args, lm_config):
     """显式传入 args 与 lm_config，返回 model 与 tokenizer"""
-    tokenizer = AutoTokenizer.from_pretrained('./tokenizer_k/')
+    tokenizer = AutoTokenizer.from_pretrained('./tokenizer')
     lm_config.vocab_size = tokenizer.vocab_size
     model = NanoLlama(lm_config)
     model = model.to(args.device)
@@ -71,7 +71,8 @@ def train_model(args, lm_config, ctx):
         drop_last=True, 
         shuffle=True, 
         num_workers=args.num_workers,
-        collate_fn=train_ds.collate_fn
+        collate_fn=train_ds.collate_fn,
+        persistent_workers=True
     )
 
     Logger("Creating log file...")
@@ -201,22 +202,22 @@ if __name__ == "__main__":
     # 目录和路径参数
     parser.add_argument("--out_dir", type=str, default="ouput", help="结果输出目录")
     parser.add_argument("--save_dir", type=str, default="checkpoints", help="训练检查点保存目录")
-    parser.add_argument("--data_path", type=str, default="data/pretrain_data.jsonl", help="训练数据路径")
+    parser.add_argument("--data_path", type=str, default="data/pretrain_sample_data.jsonl", help="训练数据路径")
     parser.add_argument("--log_path", type=str, default="ouput/training_log.csv", help="训练日志保存路径")
     parser.add_argument("--resume_from", type=str, default=None, help="从指定的checkpoint文件恢复训练")
 
     # 训练超参数
     parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=32, help="批次大小")
+    parser.add_argument("--batch_size", type=int, default=4, help="批次大小")
     parser.add_argument("--learning_rate", type=float, default=3e-4, help="最大学习率")
     parser.add_argument("--weight_decay", type=float, default=0.1, help="AdamW的权重衰减")
 
     # 设备和精度
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="训练设备 (e.g., 'cuda', 'cpu')")
-    parser.add_argument("--dtype", type=str, default="bfloat16" if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else "float16", help="数据类型 ('float16', 'bfloat16', 'float32')")
+    parser.add_argument("--device", type=str, default=None, help="训练设备 (e.g., 'cuda', 'cpu')")
+    parser.add_argument("--dtype", type=str, default=None, help="数据类型 ('float16', 'bfloat16', 'float32')")
 
     # 训练优化参数
-    parser.add_argument("--accumulation_steps", type=int, default=4, help="梯度累积步数")
+    parser.add_argument("--accumulation_steps", type=int, default=16, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
     parser.add_argument("--warmup_iters", type=int, default=4000, help="学习率预热迭代次数")
 
@@ -229,7 +230,28 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # 如果用户没传 device，就基于当前环境决定
+    if args.device is None:
+        args.device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # 安全判断 bfloat16 支持（放在解析之后并用 try/except）
+    if args.dtype is None:
+        pt_supports_bf16 = False
+        if "cuda" in args.device:
+            print("Using device:", torch.cuda.current_device(), torch.cuda.get_device_name())
+            try:
+                pt_supports_bf16 = torch.cuda.is_bf16_supported()
+            except Exception as e:
+                Logger(f"Warning: torch.cuda.is_bf16_supported() failed: {e}. Falling back to float16.")
+                pt_supports_bf16 = False
+        args.dtype = "bfloat16" if pt_supports_bf16 else "float16"
+
+    print(args)
+
+    # exit(0)
+
     lm_config = ModelConfig(dim=1024, n_layers=18)
+    # lm_config = ModelConfig(dim=512, n_layers=6)
     os.makedirs(args.out_dir, exist_ok=True)
     os.makedirs(args.save_dir, exist_ok=True)
 

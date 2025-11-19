@@ -13,26 +13,58 @@ class PretrainDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.eos_token_id = tokenizer.eos_token_id
-
         self.data_path = data_path
+
+        self.offsets = [0]
+        self.file_handle = None
         
-        self.samples = []
-        self._prepare_samples()
+        print(f"Building index for {data_path} ...")
+
+        with open(data_path, "rb") as f:
+            # index = 0
+            while True:
+                line = f.readline()
+                if not line:
+                    break
+                self.offsets.append(f.tell())
+                index += 1
+                if index == 1024 * 1024:
+                    break 
+
+        if self.offsets[-1] == self.offsets[-2]:
+             self.offsets.pop()
+        
+        self.total_samples = len(self.offsets) - 1
+        print(f"Index built. Found {self.total_samples} samples.")
 
     def __len__(self):
-        return len(self.samples)
+        return self.total_samples
 
     def __getitem__(self, index: int):
-        sample = self.samples[index]
+        if self.file_handle is None:
+            self.file_handle = open(self.data_path, "rb")
+
+        start_pos = self.offsets[index]
+        end_pos = self.offsets[index + 1]
+        length = end_pos - start_pos
+
+        self.file_handle.seek(start_pos)
+        line_bytes = self.file_handle.read(length)
+
+        try:
+            sample = json.loads(line_bytes.decode('utf-8'))
+        except json.JSONDecodeError:
+            print(f"Error decoding line at index {index}")
+            return self.__getitem__((index + 1) % self.total_samples)
+
         input_ids = sample['tokens']
         doc_boundaries = sample['doc_boundaries']
         
-        # intra-document attention mask
         attention_mask = self._create_attention_mask(doc_boundaries, self.max_length)
         
         return {
             'input_ids': torch.tensor(input_ids, dtype=torch.long),
-            'attention_mask': torch.tensor(attention_mask, dtype=torch.long)
+            'attention_mask': torch.tensor(attention_mask, dtype=torch.bool)
         }
     
     @staticmethod
@@ -40,77 +72,16 @@ class PretrainDataset(Dataset):
         """
         Collate function to combine a list of samples into a batch.
         """
+        # [batch_size, seq_length]
         input_ids = torch.stack([item['input_ids'] for item in batch])
+        # [batch_size, 1, seq_length, seq_length]
         attention_mask = torch.stack([item['attention_mask'] for item in batch])
+        attention_mask.unsqueeze_(1)  
 
         return {
             'input_ids': input_ids,           # [batch_size, seq_length]
             'attention_mask': attention_mask, # [batch_size, seq_length, seq_length]
         }
-    
-    def _prepare_samples(self):
-        """
-        Optimized method to prepare samples by processing documents in a stream.
-        This avoids loading the entire dataset into memory.
-        """
-        num_documents = sum(1 for _ in open(self.data_path, 'r'))
-
-        buffer_tokens = []
-        buffer_boundaries = []
-        total_tokens_processed = 0
-
-        with open(self.data_path, 'r', encoding='utf-8') as f:
-            for line in tqdm(f, total=num_documents, desc="Processing Documents"):
-                # 1. Load and tokenize one document
-                sample_text = json.loads(line)['text']
-                doc_tokens = self.tokenizer.encode(sample_text, add_special_tokens=False)
-                doc_tokens.append(self.eos_token_id)
-                total_tokens_processed += len(doc_tokens)
-                
-                # 2. Add the new document's tokens and its boundary to the buffer
-                new_doc_start = len(buffer_tokens)
-                buffer_tokens.extend(doc_tokens)
-                buffer_boundaries.append((new_doc_start, len(buffer_tokens)))
-
-                # 3. Create as many full samples as possible from the current buffer
-                while len(buffer_tokens) >= self.max_length:
-                    # Take max_length tokens for the new sample
-                    sample_tokens = buffer_tokens[:self.max_length]
-                    
-                    # Calculate document boundaries for this specific sample
-                    sample_doc_boundaries = []
-                    for doc_start, doc_end in buffer_boundaries:
-                        # Calculate the overlap between the document [doc_start, doc_end)
-                        # and the sample's range [0, self.max_length)
-                        overlap_start = max(0, doc_start)
-                        overlap_end = min(self.max_length, doc_end)
-                        
-                        if overlap_start < overlap_end:
-                            sample_doc_boundaries.append((overlap_start, overlap_end))
-
-                    # Add the finalized sample
-                    self.samples.append({
-                        'tokens': sample_tokens,
-                        'doc_boundaries': sample_doc_boundaries
-                    })
-                    
-                    # 4. Update the buffers for the next iteration
-                    # Remove the tokens that were just used
-                    buffer_tokens = buffer_tokens[self.max_length:]
-                    
-                    # Update boundaries: shift them left and remove those no longer in the buffer
-                    new_boundaries = []
-                    for doc_start, doc_end in buffer_boundaries:
-                        new_start = doc_start - self.max_length
-                        new_end = doc_end - self.max_length
-                        if new_end > 0: # Keep the boundary only if it's still relevant
-                            new_boundaries.append((new_start, new_end))
-                    
-                    buffer_boundaries = new_boundaries
-
-        num_samples = len(self.samples)
-        print(f"Prepared {num_samples} samples from {num_documents} documents")
-        print(f"Total tokens: {total_tokens_processed}, Utilized: {num_samples * self.max_length}")
     
     def _create_attention_mask(self, doc_boundaries, seq_length):
         """
@@ -122,12 +93,12 @@ class PretrainDataset(Dataset):
             torch.Tensor: Attention mask of shape (seq_length, seq_length).
         1 indicates attention is allowed, 0 indicates no attention.
         """
-        mask = torch.zeros(seq_length, seq_length, dtype=torch.long)
+        mask = torch.zeros(seq_length, seq_length, dtype=torch.bool)
 
         for start, end in doc_boundaries:
             # Create a causal mask for the segment of this document
             doc_len = end - start
-            causal_mask = torch.tril(torch.ones(doc_len, doc_len, dtype=torch.long))
+            causal_mask = torch.tril(torch.ones(doc_len, doc_len, dtype=torch.bool))
             # Place this causal mask in the correct block of the main attention mask
             mask[start:end, start:end] = causal_mask
         

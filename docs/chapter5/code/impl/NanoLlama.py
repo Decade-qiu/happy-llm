@@ -1,11 +1,9 @@
 import math
-from re import A
 from typing import Optional
 import warnings
-from sympy import Float
 import torch
 import torch.nn.functional as F
-from torch import FloatTensor, LongTensor, Tensor, nn
+from torch import LongTensor, Tensor, nn
 
 from transformers import PreTrainedModel, AutoTokenizer
 from transformers.modeling_outputs import CausalLMOutputWithPast
@@ -24,7 +22,7 @@ class ModelConfig(PretrainedConfig):
         hidden_dim: int = 0,
         multiple_of: int = 64,
         norm_eps: float = 1e-6,
-        max_seq_len: int = 512,
+        max_seq_len: int = 1024,
         dropout: float = 0.1,
         flash_attn: bool = True,
         **kwargs,
@@ -606,8 +604,10 @@ if __name__ == '__main__':
 
     X = LongTensor(input_id[:-1]).unsqueeze(0)
     Y = LongTensor(input_id[1:]).unsqueeze(0)
+    attention_mask = Tensor(torch.ones_like(X, dtype=torch.bool)).unsqueeze(1).unsqueeze(0)
     print("X shape :", X.shape)
     print("Y shape :", Y.shape)
+    print("attention_mask shape :", attention_mask.shape)
 
-    output = model(X)
+    output = model(X, attention_mask=attention_mask)
     print(output.shape)
